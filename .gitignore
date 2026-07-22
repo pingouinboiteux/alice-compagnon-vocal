@@ -1,0 +1,27 @@
+# Environnements Python (un par organe) — se reconstruisent avec pip
+venv/
+venv_*/
+*/venv/
+*/venv_*/
+__pycache__/
+*.pyc
+
+# Modèles — se retéléchargent, jamais dans git
+modeles/
+*.gguf
+*.onnx
+*.bin
+
+# La configuration locale (chemins de la machine)
+config_local.py
+
+# La mémoire de l'IA : privée, et binaire
+memoire/magasin/
+memoire/.mem0/
+memoire/en_attente*.json
+
+# Journaux et enregistrements — contiennent votre voix et vos conversations
+tests/logs/
+logs/
+*.wav
+*.mp3
