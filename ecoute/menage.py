@@ -7,12 +7,12 @@ QUE RIEN NE SURVIVE À LA FERMETURE DE LA FENÊTRE.
 ║                                                                               ║
 ║ En allant verifier autre chose, on a trouve QUATRE services d'anciennes       ║
 ║ sessions encore vivants : trois cerveaux (17h50, 18h36, 18h49) qui se         ║
-║ disputaient le port 8082, et un llama-server orphelin de 15 Go.               ║
+║ disputaient le port 8182, et un llama-server orphelin de 15 Go.               ║
 ║ A eux seuls, ils occupaient 23 Go de memoire vive : en les arretant, la       ║
 ║ machine est passee de 29,3 Go (92 %) a 6,1 Go (19 %).                         ║
 ║                                                                               ║
 ║ Consequences, toutes constatees :                                             ║
-║   - le lag de Utilisateur etait aggrave par des services qu'il croyait fermes ;  ║
+║   - le lag de l'utilisateur etait aggrave par des services qu'il croyait fermes ;  ║
 ║   - un essai a parle a un VIEUX service au lieu du nouveau, et j'ai failli    ║
 ║     conclure que ma correction ne marchait pas. Un zombie ment.               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -107,26 +107,42 @@ def mettre_dans_lenclos(job, proc):
 
 # Les programmes qui n'ont AUCUNE raison de survivre à une session : ce sont les
 # nôtres, lancés par nous. On ne touche à rien d'autre (surtout pas LM Studio,
-# que Utilisateur peut ouvrir lui-même).
+# que l'utilisateur peut ouvrir lui-même).
 NOTRES = ("llama-server.exe", "whisper-server.exe")
 
 
 def nettoyer_restes(tracer=None):
-    """Tue les services d'une session precedente qui traineraient encore."""
+    """Tue les services d'une session precedente qui traineraient encore.
+
+    ⚠️ PAR CHEMIN, PAS PAR NOM (audit du 28/07/2026) : l'ancien
+    `taskkill /F /IM llama-server.exe` abattait TOUS les llama-server de la
+    machine — y compris un autre outil local ouvert par l'utilisateur. Le critère
+    par chemin est aussi sans ambiguïté que le critère par port : seuls les
+    exécutables qui vivent dans le dossier de CETTE Alice V3 sont à nous.
+    """
     tues = []
-    for nom in NOTRES:
-        try:
-            # encoding/errors explicites : taskkill repond en francais dans
-            # l'encodage de la console (CP1252), pas en UTF-8 — sans ca, un
-            # accent dans son message fait planter la lecture de la sortie.
-            r = subprocess.run(["taskkill", "/F", "/IM", nom], capture_output=True,
-                               text=True, encoding="cp1252", errors="replace",
-                               timeout=60,
-                               creationflags=subprocess.CREATE_NO_WINDOW)
-            if r.returncode == 0:
-                tues.append(nom)
-        except Exception:
-            pass
+    racine = (
+        __import__("os").path.dirname(
+            __import__("os").path.dirname(__import__("os").path.abspath(__file__))
+        )
+        .replace("'", "''")
+    )
+    noms_ps = ",".join(f"'{n}'" for n in NOTRES)
+    ps = ("Get-CimInstance Win32_Process | Where-Object { "
+          f"@({noms_ps}) -contains $_.Name -and "
+          f"$_.ExecutablePath -like '{racine}\\*' }} | "
+          "ForEach-Object { $_.Name; "
+          "Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+    try:
+        # encoding/errors explicites : la console repond en CP1252, pas en
+        # UTF-8 — sans ca, un accent dans un message fait planter la lecture.
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, text=True, encoding="cp1252",
+                           errors="replace", timeout=60,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        tues = sorted({l.strip() for l in (r.stdout or "").splitlines() if l.strip()})
+    except Exception:
+        pass
     if tues and tracer:
         tracer("MÉNAGE", f"restes d'une session précédente arrêtés : {', '.join(tues)}")
     liberer_les_ports(tracer)
@@ -135,15 +151,15 @@ def nettoyer_restes(tracer=None):
 
 # Les ports d'Alice. Personne d'autre sur cette machine n'a le droit d'y être :
 # tout processus qui y écoute est un des nôtres, d'une session précédente.
-PORTS_ALICE = (8080, 8081, 8082, 8095, 8096)
+PORTS_ALICE = (8180, 8181, 8182, 8195, 8196, 8197)
 
 
 def liberer_les_ports(tracer=None):
     """Tue tout processus qui écoute déjà sur un port d'Alice.
 
-    POURQUOI (20/07/2026, vécu par Utilisateur) : un service de test à moi avait
-    survécu sur le port 8082 — taskkill par NOM ne l'attrapait pas, c'était un
-    python.exe comme les autres. Quand Utilisateur a lancé Alice, SA boucle s'est
+    POURQUOI (20/07/2026, vécu par l'utilisateur) : un service de test à moi avait
+    survécu sur le port 8182 — taskkill par NOM ne l'attrapait pas, c'était un
+    python.exe comme les autres. Quand l'utilisateur a lancé Alice, SA boucle s'est
     connectée à MON service : elle avait les souvenirs de mon test en tête, puis
     elle est devenue muette quand les moteurs se sont emmêlés. Fenêtre ouverte,
     aucune erreur nulle part.
@@ -151,7 +167,7 @@ def liberer_les_ports(tracer=None):
     Un zombie qui tient un port est pire qu'un zombie qui mange de la RAM : il
     RÉPOND à la place du vrai service, avec un autre passé. On ne peut pas le
     chasser par nom (python.exe est trop commun pour être abattu à l'aveugle),
-    mais par PORT c'est sans ambiguïté : ces cinq ports sont à nous.
+    mais par PORT c'est sans ambiguïté : ces six ports sont à nous.
     """
     ps = ("$p=@(" + ",".join(str(p) for p in PORTS_ALICE) + ");"
           "foreach($x in $p){Get-NetTCPConnection -LocalPort $x -State Listen "
@@ -184,7 +200,9 @@ def purger_vieux_enregistrements(tracer=None, jours_wav=7, jours_journaux=14):
     l'audio et `jours_journaux` pour les journaux, on jette.
     """
     import os
-    base = os.path.join(PROJET, r"tests\logs")
+    base = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "logs")
     maintenant = time.time()
     jetes = 0
     try:

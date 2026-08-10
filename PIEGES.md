@@ -1,156 +1,87 @@
-# Les pièges — ce que ce projet a payé pour vous
+# Les pieges payes
 
-Tout ce qui suit a été **mesuré sur la machine**, pas supposé. C'est la vraie
-valeur de ce dépôt : chaque point représente des heures perdues.
+Tout ce qui suit a ete retenu parce que ca a vraiment coute du temps, ou parce
+que ca a vraiment debloque le projet.
 
----
+Rien ici n'est la pour faire "complet". Si un piege est banal, deja mille fois
+documente, ou trop flou pour aider concretement, il ne sort pas.
 
-## Le TTS (Kyutai Pocket TTS)
+## 1. Un `.gitignore` ne demenage pas tout seul
 
-**`max_tokens` ne compte PAS des trames audio.** Ce sont des jetons de **texte**
-par morceau, pour le découpeur interne. Le défaut (50 ≈ 16 s de parole) est
-l'horizon d'entraînement du modèle. En mettant une grande valeur pour « enlever
-une limite », on désactive le découpage qui protège des mots sautés et on pousse
-le modèle hors de sa distribution. Symptômes : plafond dur vers 15 s d'audio, et
-des mots avalés. **Ne passez pas ce paramètre.**
+Des motifs ancres a la racine ne protegent plus rien apres un deplacement du
+code dans un sous-dossier. Toujours verifier avec :
 
-**Le rembourrage « `. . . .` » en fin de texte est PRONONCÉ.** Ce contournement
-circule pour éviter les fins avalées ; le modèle lit ces pauses, et elles
-deviennent des queues de silence. Le vrai paramètre est **`frames_after_eos`**
-(la config française recommande 8 trames de 80 ms).
+`git check-ignore -v <chemin>`
 
-**Les textes de moins de ~40 caractères sont peu fiables.** Le code amont le
-reconnaît. Il existe une parade officielle (`pad_with_spaces_for_short_inputs`)
-**désactivée par défaut pour le français** : activez-la, et groupez vos phrases.
+## 2. Windows ne tue pas les arbres de processus
 
-**Le modèle reproduit la qualité de la référence de clonage, silence compris.**
-Un demi-seconde de blanc en tête de votre échantillon = des démarrages lents à
-chaque réplique. Rognez la référence, et remontez son volume : une référence
-molle donne un ancrage d'identité mou (dérives de timbre, voix qui change).
+Fermer le parent ne tue pas toujours les enfants. Pour un projet a services
+locaux, ca cree vite des zombies qui mangent RAM, VRAM ou ports TCP.
 
-**Aucun normaliseur de texte.** Les chiffres sortent déformés : convertissez
-« 15h30 » en « quinze heures trente » avant l'envoi.
+Le garde-fou solide ici a ete le Job Object Windows.
 
-**Corruptions intermittentes** (mots répétés, changement de voix) : bug amont
-connu, sans correctif. La seule parade fiable est de **réécouter chaque unité
-produite avec un moteur de reconnaissance vocale, avant de la jouer**, et de la
-refaire si trop de mots manquent. C'est ce que fait le « portier » de ce projet.
+## 3. `winsound` ne suffit pas pour une vraie voix en flux
 
----
+`winsound` sait jouer un son entier. Il ne sait pas streamer correctement des
+blocs qui arrivent au fil de l'eau. Pour une voix locale qui se fabrique en
+meme temps qu'elle parle, il a fallu passer a `waveOut`.
 
-## La reconnaissance vocale et la fin de tour
+## 4. Le reveil a froid d'un moteur vocal peut ruiner toute l'experience
 
-**smart-turn : les exports `v3.1-cpu` et `v3.2-cpu` répondent ~0,98 à TOUT**
-(bruit blanc et silence compris) avec le prétraitement officiel de Pipecat. Seul
-le **v3.0** discrimine réellement (0,98 phrase finie / 0,06 phrase coupée).
-Vérifié en comparant les trois exports sur les mêmes échantillons.
+La voix pouvait sembler "cassee" alors que le vrai probleme etait surtout son
+retour a froid apres un silence. Un petit pouls interne a garde le moteur chaud
+et a fait tomber le delai ressenti.
 
-**Il faut normaliser l'audio (`do_normalize`) avant le mel-spectrogramme.** Sans
-cette étape, même résultat : « oui » à tout, en silence. Un auto-test avec du
-bruit blanc (qui doit sortir un score bas) attrape ça immédiatement.
+## 5. GPU-Z ment au repos sur le PCIe
 
-**whisper.cpp complète toujours l'audio à 30 secondes** avant de le traiter : le
-coût ne dépend pas de la longueur de la phrase, seulement du nombre de cœurs.
-L'option `-ac` raccourcit cette fenêtre (6,6 s → 3,4 s par phrase ici) ; ne
-descendez pas trop bas, le modèle repasse en repli et devient plus lent.
+Pour savoir si une carte est vraiment en x1, x2, x4 ou x16, il faut regarder
+sous charge. Sinon on peut accuser le mauvais coupable pendant des heures.
 
-**Un filtre anti-hallucinations écrit pour whisper devient nuisible avec un
-modèle qui n'hallucine pas.** Les listes de formules fantômes (« merci »,
-« voilà ») jetaient de vraies paroles courtes de l'utilisateur sous Parakeet.
-Réservez ces règles au moteur pour lequel elles ont été écrites.
+## 6. Sur AMD/Windows, la priorite GPU miracle n'existe pas
 
----
+Quand le jeu et l'IA se battent pour la meme carte, il n'y a pas de bouton
+magique. Les leviers utiles ont ete :
 
-## Le modèle de langage (llama.cpp)
+- reduire la demande ;
+- choisir quelle appli Windows prefere quelle carte ;
+- baisser la priorite des bons processus ;
+- mesurer avant de croire.
 
-**`--no-mmap` a libéré 12,5 Go de RAM système.** Le jeu ramait, la VRAM semblait
-en cause : c'était la mémoire vive, bloquée à 98 %. Vitesse identique avec ou
-sans. Ajoutez `-fa on` et un cache KV en `q8_0` pour un gigaoctet de plus.
+## 7. Un garde-fou deterministe bat une interdiction dans un prompt
 
-**`--parallel 1`** donne **+48 % de vitesse** quand il n'y a qu'un utilisateur :
-les emplacements de conversation supplémentaires coûtent cher pour rien.
+Quand un comportement doit etre interdit pour de bon, le prompt ne suffit pas.
+Pour les fuites, les didascalies, les repetitions, les frontieres d'interface
+ou les mots sensibles, le code a tenu la ou la consigne seule cede tot ou tard.
 
-**Un modèle qui rame quand un jeu tourne, c'est le partage du temps de calcul
-GPU, pas la VRAM.** Mesuré : -43 % / -75 % / -95 % selon la charge, et tout
-remonte dès que la charge s'arrête. Aucun réglage de priorité GPU n'existe sous
-Windows/AMD : le seul levier est de réduire la demande.
+## 8. Les instruments de mesure mentent aussi
 
-**Les finetunes de jeu de rôle 12B n'ont pas tenu** (Mag Mell, Rocinante,
-RPMax) : entraînés sur des corpus anglais, ils dégradent la grammaire française
-et aucun ne tient un personnage sous attaque. Un modèle généraliste 24B les bat
-nettement sur ce terrain.
+Le projet a perdu du temps sur :
 
----
+- une mauvaise lecture VRAM ;
+- des mesures prises au mauvais endroit ;
+- des tests qui tenaient eux-memes la ressource mesuree ;
+- des chiffres vrais mais mal interpretes.
 
-## La mémoire (Mem0)
+Regle de survie :
 
-**Mem0 2.0.x est en ajout seul** : le mécanisme à quatre opérations
-(ajouter / corriger / supprimer / ignorer) n'est plus branché, aucun réglage ne
-le rallume. Résultat : les doublons s'empilent indéfiniment. Il faut
-dédoublonner et réconcilier soi-même (ce projet le fait avec un juge LLM à
-température 0, dont la consigne est « dans le doute, garde les deux »).
+- verifier l'instrument ;
+- verifier l'unite ;
+- verifier le contexte ;
+- seulement apres accuser le systeme.
 
-**`get_all()` plafonne silencieusement à 20 résultats**, quelle que soit la
-limite demandée. Un outil de diagnostic bâti dessus ment sans le dire.
+## 9. PowerShell 5.1 reste fragile sur l'encodage
 
-**Les hallucinations deviennent des souvenirs si on n'y prend garde.** Le
-mécanisme : l'IA invente un détail, l'utilisateur y répond, sa réponse est
-mémorisée comme un fait. C'est auto-entretenu et invisible. Parade : un portier
-à l'entrée qui écarte les phrases méta et les échos de ce que l'IA vient de
-dire, et une règle de tri explicite (« si le sujet vient de l'IA, on ne retient
-pas »).
+Un `.ps1` non ASCII peut casser silencieusement sur certains postes Windows.
+Quand un script doit juste marcher, l'ASCII strict reste une discipline utile.
 
----
+## 10. La valeur d'un projet comme celui-ci n'est pas seulement dans les "bons" choix
 
-## Les voix clonées
+La vraie valeur vient souvent de :
 
-**Une référence à l'accent anglais dans un modèle TTS multilingue le fait
-TRADUIRE au lieu de lire** (6 dérapages sur 10 mesurés : « Because you're
-putting a dépourvu with that question »). Il faut une référence **dans la langue
-cible**. La position des mainteneurs amont est claire là-dessus.
+- ce qui a ete ecarte ;
+- pourquoi ca a ete ecarte ;
+- avec quelle mesure ;
+- et quel repli a finalement tenu.
 
-**Vérifiez la qualité de la source avant de soupçonner le moteur.** Un timbre
-« métallique » attribué au moteur venait en réalité d'une référence
-ré-échantillonnée à 24 kHz. Le moteur clonait fidèlement les dégâts.
-
-**Jouer un son à une fréquence différente de celle de sa fabrication change sa
-hauteur.** Évident, mais c'est un défaut silencieux : aucune erreur nulle part,
-juste une voix qui sonne « plus grave » sans raison apparente.
-
----
-
-## Windows
-
-**Windows ne tue pas les arbres de processus.** Arrêter un service Python
-laisse vivre le serveur qu'il avait lancé. 23 Go de zombies retrouvés — dont un
-qui **répondait sur le port à la place du vrai service** et corrompait les
-mesures. Parade : un **Job Object** Windows ; tout ce qui y est lancé meurt avec
-le parent, quelle que soit la façon dont le parent disparaît.
-
-**PowerShell 5.1 lit les `.ps1` en CP1252**, pas en UTF-8. Un seul caractère
-accentué, même dans un commentaire, casse le script entier dès la première
-ligne. Gardez vos scripts PowerShell en pur ASCII.
-
-**La console Windows en CP1252 peut tuer un service.** Un caractère exotique
-dans une ligne de trace lève une exception en pleine réponse. Mettez
-`sys.stdout.reconfigure(errors="replace")` en tête de chaque service.
-
-**Le « démarrage rapide » de Windows fait que « Arrêter » n'est pas un vrai
-redémarrage** : le compteur d'uptime ment, et certains bugs survivent aux
-extinctions.
-
----
-
-## Les deux leçons de méthode
-
-**Une interdiction dans un prompt ne tient pas ; un filtre déterministe tient.**
-Vrai pour les didascalies, les fuites de consignes, les répétitions, les surnoms
-mal orthographiés, l'écriture inclusive prononcée. À chaque fois, sans
-exception, la consigne a cédé et le code a tenu.
-
-**Vos instruments de mesure mentiront.** Douze fois dans ce projet : un compteur
-VRAM qui ne voit que son propre processus, des bancs d'essai tournant en
-parallèle qui étouffent la machine qu'ils mesurent, un test qui tient lui-même
-la ressource qu'il teste, une mauvaise unité de mesure, des seuils faux, un
-lancement en arrière-plan qui n'a jamais démarré. **Règle : quand une mesure
-contredit le vécu, vérifiez l'instrument avant de soupçonner le système.**
+Un depot public utile n'est pas juste un depot "propre". C'est un depot qui
+explique aussi ses impasses.
